@@ -4,6 +4,8 @@ name: linux-diagnostics
 # branch, so the failure can be read without the Actions API. Removed before the
 # release is tagged.
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
