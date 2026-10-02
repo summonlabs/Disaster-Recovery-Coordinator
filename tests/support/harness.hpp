@@ -10,9 +10,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "drc/engine.hpp"
@@ -186,6 +188,41 @@ inline std::uint64_t next_serial() {
     static std::atomic<std::uint64_t> counter{0};
     return counter.fetch_add(1) + 1;
 }
+
+// Joins every thread it holds when it leaves scope, running an optional hook
+// first (typically setting a stop flag). Without it, a failing requirement
+// unwinds through a joinable std::thread, whose destructor calls
+// std::terminate and hides the failure that caused the unwind.
+class ThreadGroup {
+public:
+    explicit ThreadGroup(std::function<void()> before_join = {})
+        : before_join_(std::move(before_join)) {}
+    ThreadGroup(const ThreadGroup&) = delete;
+    ThreadGroup& operator=(const ThreadGroup&) = delete;
+    ~ThreadGroup() { join(); }
+
+    void add(std::thread thread) { threads_.push_back(std::move(thread)); }
+
+    void join() {
+        if (joined_) {
+            return;
+        }
+        joined_ = true;
+        if (before_join_) {
+            before_join_();
+        }
+        for (std::thread& thread : threads_) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    }
+
+private:
+    std::vector<std::thread> threads_;
+    std::function<void()> before_join_;
+    bool joined_ = false;
+};
 
 struct TempDir {
     std::string path;
@@ -462,9 +499,23 @@ struct Rig {
         request.event = event;
         request.max_rounds = rounds;
         request.max_dispatches = dispatches;
-        drc::Result<drc::AdvanceReport> report = coordinator->advance(request);
-        DRC_REQUIRE(report.ok());
-        return report.value();
+        // Busy is a documented outcome of a non-blocking mutating call: another
+        // caller held the engine lock at that instant, and retrying is the
+        // contract. The retry is bounded by attempts — a bound on work, never on
+        // wall-clock time — and every other status still fails the test with its
+        // message attached.
+        constexpr std::uint32_t kMaxBusyRetries = 20000;
+        for (std::uint32_t attempt = 0;; ++attempt) {
+            drc::Result<drc::AdvanceReport> report = coordinator->advance(request);
+            if (report.ok()) {
+                return report.value();
+            }
+            if (report.status().code() != drc::ErrorCode::Busy ||
+                attempt + 1 >= kMaxBusyRetries) {
+                DRC_REQUIRE_OK(report);
+                return drc::AdvanceReport{};
+            }
+        }
     }
 
     // Advances until the engine reports nothing left to do, with a hard bound

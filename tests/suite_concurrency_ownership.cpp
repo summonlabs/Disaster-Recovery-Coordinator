@@ -123,7 +123,10 @@ DRC_TEST(concurrency_a_second_mutation_is_refused_while_one_is_in_progress) {
     DRC_REQUIRE_OK(rig.coordinator->begin_recovery(event));
 
     std::atomic<int> outcome{0};  // 0 = not run, 1 = Busy, 2 = something else
-    std::thread advancer([&]() { (void)rig.advance(event, 4, 8); });
+    // Owned by a group that joins on scope exit: a failing requirement below
+    // must report itself rather than terminate the process.
+    drctest::ThreadGroup advancer;
+    advancer.add(std::thread([&]() { (void)rig.advance(event, 4, 8); }));
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
     const Status concurrent = rig.coordinator->define_site(
         SiteRecord{SiteId{99}, "concurrent", FailureDomainId{2}, 10});
@@ -173,9 +176,9 @@ DRC_TEST(concurrency_readers_never_observe_a_torn_state) {
 
     std::atomic<bool> stop{false};
     std::atomic<bool> failed{false};
-    std::vector<std::thread> readers;
+    drctest::ThreadGroup readers([&stop]() { stop.store(true); });
     for (int i = 0; i < 4; ++i) {
-        readers.emplace_back([&]() {
+        readers.add(std::thread([&]() {
             while (!stop.load()) {
                 const Digest digest = rig.coordinator->state_digest();
                 if (digest.is_zero()) {
@@ -197,13 +200,10 @@ DRC_TEST(concurrency_readers_never_observe_a_torn_state) {
                     break;
                 }
             }
-        });
+        }));
     }
     const AdvanceReport report = rig.settle(event);
-    stop.store(true);
-    for (std::thread& reader : readers) {
-        reader.join();
-    }
+    readers.join();
 
     DRC_REQUIRE(!failed.load());
     DRC_REQUIRE(report.quiescent);
