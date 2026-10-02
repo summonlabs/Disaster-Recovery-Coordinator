@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <poll.h>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 #endif
 
@@ -155,7 +156,18 @@ Child& Child::operator=(Child&& other) noexcept {
 }
 
 Child::~Child() {
+#if defined(_WIN32)
     (void)terminate();
+#else
+    // A killed child stays a zombie until it is reaped, and nothing guarantees
+    // that wait() was called. Windows reaps through the process handle instead.
+    const std::uint64_t pid = pid_;
+    const bool live = !exited_;
+    (void)terminate();
+    if (live) {
+        reap_killed_child(pid);
+    }
+#endif
     close_handles();
 }
 
@@ -636,6 +648,38 @@ namespace {
     return filled;
 }
 
+// The verdict of a reaped child: its exit code, or 128 + signal when it was
+// killed. Both platforms report the same shape.
+[[nodiscard]] int decode_wait_status(int status) {
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return -1;
+}
+
+// Reaps a child that has already been killed. Bounded: SIGKILL cannot be
+// caught, so this returns promptly, and the loop exists only so that a process
+// which cannot be scheduled at all cannot wedge the caller.
+void reap_killed_child(std::uint64_t pid) {
+    if (pid == 0) {
+        return;
+    }
+    int status = 0;
+    for (int attempt = 0; attempt < 2000; ++attempt) {
+        const pid_t done = ::waitpid(static_cast<pid_t>(pid), &status, WNOHANG);
+        if (done == static_cast<pid_t>(pid)) {
+            return;
+        }
+        if (done < 0 && errno != EINTR) {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
 }  // namespace
 
 Result<std::vector<std::uint8_t>> Child::read_frame(std::uint32_t max_frame_bytes,
@@ -719,13 +763,7 @@ Result<int> Child::wait() {
         break;
     }
     exited_ = true;
-    if (WIFEXITED(status)) {
-        exit_code_ = WEXITSTATUS(status);
-    } else if (WIFSIGNALED(status)) {
-        exit_code_ = 128 + WTERMSIG(status);
-    } else {
-        exit_code_ = -1;
-    }
+    exit_code_ = decode_wait_status(status);
     return exit_code_;
 }
 
@@ -735,6 +773,15 @@ bool Child::running() const {
     }
     int status = 0;
     const pid_t done = ::waitpid(static_cast<pid_t>(pid_), &status, WNOHANG);
+    if (done == static_cast<pid_t>(pid_)) {
+        // waitpid() consumes the exit status, so it is recorded here: throwing
+        // it away would make a later wait() fail with ECHILD and lose the
+        // outcome of the child forever. GetExitCodeProcess on Windows is
+        // read-only, so that platform has no equivalent of this hazard.
+        exited_ = true;
+        exit_code_ = decode_wait_status(status);
+        return false;
+    }
     return done == 0;
 }
 
@@ -743,6 +790,24 @@ Result<std::string> Child::read_stderr(std::uint32_t max_bytes) {
         return std::string{};
     }
     const int fd = static_cast<int>(reinterpret_cast<std::intptr_t>(stderr_read_) - 1);
+    // Never block: a caller asking for diagnostics must not be left waiting on
+    // a stream with nothing to say. This mirrors PeekNamedPipe on Windows.
+    for (;;) {
+        struct pollfd descriptor {};
+        descriptor.fd = fd;
+        descriptor.events = POLLIN;
+        const int ready = ::poll(&descriptor, 1, 0);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return Status{ErrorCode::Io, "poll on child stderr failed"};
+        }
+        if (ready == 0) {
+            return std::string{};
+        }
+        break;
+    }
     std::string out;
     out.resize(max_bytes);
     const ssize_t done = ::read(fd, out.data(), out.size());

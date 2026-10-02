@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -16,6 +17,7 @@
 
 #include "drc/engine.hpp"
 #include "drc/fileio.hpp"
+#include "drc/process.hpp"
 #include "test.hpp"
 
 namespace drctest {
@@ -33,6 +35,152 @@ namespace drctest {
 #endif
     return path;
 }
+
+// ---------------------------------------------------------------------------
+// Shell integration
+//
+// drc::process::Child speaks the framed participant protocol on stdout, so a
+// tool's plain console text is captured through a script file that redirects
+// the shell's own output instead of reading that pipe. The script also keeps a
+// command line that carries flags out of the console's own script tokenizer.
+// Everything below is the same shape on both platforms: only the shell, the
+// quoting rules and the line ending differ.
+// ---------------------------------------------------------------------------
+
+// File helpers for the script writers below. Named distinctly so a suite's own
+// local helpers can never collide with them.
+inline void write_text_file(const std::string& path, const std::string& contents) {
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    stream << contents;
+}
+
+[[nodiscard]] inline std::string read_text_file(const std::string& path) {
+    std::ifstream stream(path, std::ios::binary);
+    std::string contents;
+    char buffer[4096];
+    while (stream.read(buffer, static_cast<std::streamsize>(sizeof(buffer))) ||
+           stream.gcount() > 0) {
+        contents.append(buffer, static_cast<std::size_t>(stream.gcount()));
+    }
+    return contents;
+}
+
+[[nodiscard]] inline const char* script_extension() {
+#if defined(_WIN32)
+    return ".cmd";
+#else
+    return ".sh";
+#endif
+}
+
+[[nodiscard]] inline std::string script_line_end() {
+#if defined(_WIN32)
+    return "\r\n";
+#else
+    return "\n";
+#endif
+}
+
+// Quotes one argument for the platform's script language.
+[[nodiscard]] inline std::string script_quote(const std::string& value) {
+#if defined(_WIN32)
+    std::string out = "\"";
+    out.append(value);
+    out.push_back('"');
+    return out;
+#else
+    std::string out = "'";
+    for (const char character : value) {
+        if (character == '\'') {
+            out.append("'\\''");
+        } else {
+            out.push_back(character);
+        }
+    }
+    out.push_back('\'');
+    return out;
+#endif
+}
+
+// The command that runs a script file with the platform shell.
+[[nodiscard]] inline std::vector<std::string> shell_command(const std::string& script_path) {
+#if defined(_WIN32)
+    return {"cmd.exe", "/c", script_path};
+#else
+    return {"/bin/sh", script_path};
+#endif
+}
+
+// Writes a script that runs exactly the given command line.
+[[nodiscard]] inline std::string write_script(const std::string& path,
+                                              const std::vector<std::string>& argv) {
+    std::string text;
+#if defined(_WIN32)
+    text.append("@echo off");
+    text.append(script_line_end());
+#endif
+    for (std::size_t i = 0; i < argv.size(); ++i) {
+        if (i != 0) {
+            text.push_back(' ');
+        }
+        text.append(script_quote(argv[i]));
+    }
+    text.append(script_line_end());
+    write_text_file(path, text);
+    return path;
+}
+
+struct ConsoleResult {
+    int exit_code = 0;
+    std::string output;
+};
+
+// Runs a command with its console output captured through a script file, on
+// both platforms.
+[[nodiscard]] inline ConsoleResult run_captured(const std::string& scratch,
+                                               const std::string& tag,
+                                               const std::vector<std::string>& argv) {
+    const std::filesystem::path script =
+        std::filesystem::path(scratch) / (tag + "-console" + script_extension());
+    const std::filesystem::path output =
+        std::filesystem::path(scratch) / (tag + "-console.out");
+    std::string text;
+#if defined(_WIN32)
+    text.append("@echo off");
+    text.append(script_line_end());
+#endif
+    for (std::size_t i = 0; i < argv.size(); ++i) {
+        if (i != 0) {
+            text.push_back(' ');
+        }
+        text.append(script_quote(argv[i]));
+    }
+    text.append(" > ");
+    text.append(script_quote(output.string()));
+    text.append(" 2>&1");
+    text.append(script_line_end());
+#if defined(_WIN32)
+    text.append("exit /b %ERRORLEVEL%");
+#else
+    text.append("exit $?");
+#endif
+    text.append(script_line_end());
+    write_text_file(script.string(), text);
+
+    drc::process::SpawnOptions options;
+    options.command = shell_command(script.string());
+    options.working_directory = scratch;
+    drc::Result<std::unique_ptr<drc::process::Child>> child =
+        drc::process::Child::spawn(options);
+    DRC_REQUIRE(child.ok());
+    drc::Result<int> code = child.value()->wait();
+    DRC_REQUIRE(code.ok());
+    ConsoleResult result;
+    result.exit_code = code.value();
+    result.output = read_text_file(output.string());
+    return result;
+}
+
 
 inline std::uint64_t next_serial() {
     static std::atomic<std::uint64_t> counter{0};

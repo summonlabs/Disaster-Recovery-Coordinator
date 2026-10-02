@@ -17,6 +17,8 @@
 #include "test.hpp"
 
 using namespace drc;
+// The captured-console result type lives in the shared harness.
+using drctest::ConsoleResult;
 
 namespace {
 
@@ -45,43 +47,14 @@ void write_text(const std::filesystem::path& path, const std::string& contents) 
     return text.find(needle) != std::string::npos;
 }
 
-struct ConsoleResult {
-    int exit_code = 0;
-    std::string output;
-};
-
-// drc::process::Child speaks the framed participant protocol on stdout, so the
-// console's plain text is captured through the shell's own redirection. The
-// batch file keeps every quote out of the command line the library builds.
-[[nodiscard]] ConsoleResult run_console(const std::string& scratch,
-                                        const std::string& tag,
-                                        const std::vector<std::string>& arguments) {
-    const std::filesystem::path batch_path = leaf(scratch, tag + "-console.cmd");
-    const std::filesystem::path output_path = leaf(scratch, tag + "-console.out");
-    std::string batch = "@echo off\r\n\"";
-    batch.append(drctest::tool_path("drcctl"));
-    batch.append("\"");
-    for (const std::string& argument : arguments) {
-        batch.append(" \"");
-        batch.append(argument);
-        batch.append("\"");
-    }
-    batch.append(" > \"");
-    batch.append(output_path.string());
-    batch.append("\" 2>&1\r\nexit /b %ERRORLEVEL%\r\n");
-    write_text(batch_path, batch);
-
-    process::SpawnOptions options;
-    options.command = {"cmd.exe", "/c", batch_path.string()};
-    options.working_directory = scratch;
-    Result<std::unique_ptr<process::Child>> child = process::Child::spawn(options);
-    DRC_REQUIRE(child.ok());
-    Result<int> code = child.value()->wait();
-    DRC_REQUIRE(code.ok());
-    ConsoleResult result;
-    result.exit_code = code.value();
-    result.output = read_text(output_path);
-    return result;
+// The console, run with its output captured. The shell integration lives in the
+// shared harness so the same test drives the real executable on every platform.
+[[nodiscard]] drctest::ConsoleResult run_console(const std::string& scratch,
+                                                const std::string& tag,
+                                                const std::vector<std::string>& arguments) {
+    std::vector<std::string> command{drctest::tool_path("drcctl")};
+    command.insert(command.end(), arguments.begin(), arguments.end());
+    return drctest::run_captured(scratch, tag, command);
 }
 
 // The whole lifecycle as one script: two failure domains, three sites, two

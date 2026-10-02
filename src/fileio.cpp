@@ -479,6 +479,14 @@ Status File::truncate(std::uint64_t size) {
     if (::ftruncate(fd, static_cast<off_t>(size)) != 0) {
         return Status{ErrorCode::Io, last_error_message("ftruncate")};
     }
+    // ftruncate() does not move the file offset. Without this seek, the next
+    // write after a repair would start at the old end of file and leave a hole
+    // of zeros in the middle of the journal — which is interior corruption.
+    // Windows performs the same positioning explicitly (SetFilePointerEx
+    // followed by SetEndOfFile), so this makes the two platforms behave alike.
+    if (::lseek(fd, static_cast<off_t>(size), SEEK_SET) < 0) {
+        return Status{ErrorCode::Io, last_error_message("lseek after truncate")};
+    }
     return ok_status();
 }
 

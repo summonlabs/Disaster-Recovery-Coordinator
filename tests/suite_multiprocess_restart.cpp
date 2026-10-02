@@ -23,6 +23,8 @@
 #include "test.hpp"
 
 using namespace drc;
+// The captured-console result type lives in the shared harness.
+using drctest::ConsoleResult;
 
 namespace {
 
@@ -137,43 +139,14 @@ void write_text(const std::filesystem::path& path, const std::string& contents) 
 
 void note(const std::string& text) { std::cout << "    note " << text << "\n"; }
 
-struct ConsoleResult {
-    int exit_code = 0;
-    std::string output;
-};
-
-// drc::process::Child speaks the framed participant protocol on stdout, so the
-// console's plain text is captured through the shell's own redirection. The
-// batch file keeps every quote out of the command line the library builds.
-[[nodiscard]] ConsoleResult run_console(const std::string& scratch,
-                                        const std::string& tag,
-                                        const std::vector<std::string>& arguments) {
-    const std::filesystem::path batch_path = leaf(scratch, tag + "-console.cmd");
-    const std::filesystem::path output_path = leaf(scratch, tag + "-console.out");
-    std::string batch = "@echo off\r\n\"";
-    batch.append(drctest::tool_path("drcctl"));
-    batch.append("\"");
-    for (const std::string& argument : arguments) {
-        batch.append(" \"");
-        batch.append(argument);
-        batch.append("\"");
-    }
-    batch.append(" > \"");
-    batch.append(output_path.string());
-    batch.append("\" 2>&1\r\nexit /b %ERRORLEVEL%\r\n");
-    write_text(batch_path, batch);
-
-    process::SpawnOptions options;
-    options.command = {"cmd.exe", "/c", batch_path.string()};
-    options.working_directory = scratch;
-    Result<std::unique_ptr<process::Child>> child = process::Child::spawn(options);
-    DRC_REQUIRE(child.ok());
-    Result<int> code = child.value()->wait();
-    DRC_REQUIRE(code.ok());
-    ConsoleResult result;
-    result.exit_code = code.value();
-    result.output = read_text(output_path);
-    return result;
+// The console, run with its output captured. The shell integration lives in the
+// shared harness so the same test drives the real executable on every platform.
+[[nodiscard]] drctest::ConsoleResult run_console(const std::string& scratch,
+                                                const std::string& tag,
+                                                const std::vector<std::string>& arguments) {
+    std::vector<std::string> command{drctest::tool_path("drcctl")};
+    command.insert(command.end(), arguments.begin(), arguments.end());
+    return drctest::run_captured(scratch, tag, command);
 }
 
 // ---- coordinator helpers --------------------------------------------------
@@ -902,26 +875,30 @@ DRC_TEST(multiprocess_coordinator_crash_and_restart_at_every_transition) {
 DRC_TEST(multiprocess_hard_kill_leaves_a_recoverable_journal) {
     drctest::Rig rig = drctest::Rig::make("multiprocess-hardkill");
     const std::filesystem::path record_path = leaf(rig.directory->path, "participant.record");
-    const std::filesystem::path participant = leaf(rig.directory->path, "participant.cmd");
+    const std::filesystem::path participant =
+        leaf(rig.directory->path, std::string{"participant"} + drctest::script_extension());
     const std::filesystem::path script = leaf(rig.directory->path, "kill.txt");
 
     // The reference participant answers one request and then stops answering
     // while staying alive, so the console is provably mid-exchange when it is
     // killed: the record file is appended as each request is read. The wrapper
-    // batch keeps the participant's flags out of the console script, whose
-    // tokenizer has no quoting.
-    std::string batch = "@echo off\r\n\"";
-    batch.append(drctest::tool_path("drc_endpoint"));
-    batch.append("\" --domain placement_reservation_capacity --id 2 --name prc --drop-after 1");
-    batch.append(" --record \"");
-    batch.append(record_path.string());
-    batch.append("\"\r\n");
-    write_text(participant, batch);
+    // script keeps the participant's flags out of the console script, whose
+    // tokenizer cannot express a value that starts with "--".
+    (void)drctest::write_script(participant.string(),
+                                {drctest::tool_path("drc_endpoint"), "--domain",
+                                 "placement_reservation_capacity", "--id", "2", "--name", "prc",
+                                 "--drop-after", "1", "--record", record_path.string()});
+    const std::vector<std::string> wrapper = drctest::shell_command(participant.string());
 
     std::string console_script = kTopologyScript();
     console_script.append(
-        "endpoint --domain placement_reservation_capacity --id 2 --name prc --exec cmd.exe");
-    console_script.append(" --arg /c --arg participant.cmd\n");
+        "endpoint --domain placement_reservation_capacity --id 2 --name prc --exec ");
+    console_script.append(wrapper.front());
+    for (std::size_t index = 1; index < wrapper.size(); ++index) {
+        console_script.append(" --arg ");
+        console_script.append(wrapper[index]);
+    }
+    console_script.append("\n");
     console_script.append(kIncidentScript());
     write_text(script, console_script);
 
