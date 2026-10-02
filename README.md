@@ -291,6 +291,16 @@ Honest limitations, stated rather than hidden:
   directory. The difference is stated in the source where it matters.
 * **UUID-free identities.** Identities are 64-bit counters, not random; they are
   unique within a journal directory, which is the only scope they are used in.
+* **SIGPIPE is ignored on POSIX.** The first participant spawn replaces the
+  *default* disposition of `SIGPIPE` with "ignore", so writing to a participant
+  that has already exited returns `EPIPE` and becomes an unknown result rather
+  than killing the process. A host that installed its own handler keeps it; the
+  change is stated in `include/drc/process.hpp` where it happens.
+* **Mutating calls do not block.** A call that finds another call in progress
+  answers `busy` instead of waiting, and a caller that must make progress
+  retries it. This is deliberate — it keeps one slow caller from freezing the
+  console — and the test harness retries it the same way an operator script
+  would.
 * **One toolchain caveat, reproduced and stated.** MinGW clang 19 (WinLibs)
   cannot run `thread_local` storage at all: a ten-line program that writes a
   `thread_local int` dies with an access violation, with and without
@@ -440,6 +450,18 @@ These are the real ones, kept here because the fixes are the interesting part:
     rather than on wall-clock time; and threads now live in a group that joins
     them on scope exit, so a failing requirement is reported instead of unwinding
     into `std::terminate` and hiding the failure that caused it.
+17. **A participant that died mid-exchange killed the coordinator.** Writing to a
+    process that had already exited raises `SIGPIPE`, whose default action
+    terminates the program: a transport failure became a crash. The default
+    disposition is now replaced with "ignore" once, so the write reports
+    `EPIPE` and the exchange becomes an unknown outcome that fences the step.
+    A host that installed its own handler keeps it.
+18. **Four readers could starve the writer.** The engine's shared lock is
+    reader-preferring, so a single mutating call under continuous read load kept
+    meeting its own documented `Busy` answer until the retry bound ran out. The
+    retry loop yields so readers can finish their critical sections, and the
+    stress readers yield as well; the bound stays on attempts, never on
+    wall-clock time.
 
 ### What is *not* claimed
 
