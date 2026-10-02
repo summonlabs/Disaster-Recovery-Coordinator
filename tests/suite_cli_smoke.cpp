@@ -32,17 +32,6 @@ void write_text(const std::filesystem::path& path, const std::string& contents) 
     stream.close();
 }
 
-[[nodiscard]] std::string read_text(const std::filesystem::path& path) {
-    std::ifstream stream(path, std::ios::binary);
-    std::string contents;
-    char buffer[4096];
-    while (stream.read(buffer, static_cast<std::streamsize>(sizeof(buffer))) ||
-           stream.gcount() > 0) {
-        contents.append(buffer, static_cast<std::size_t>(stream.gcount()));
-    }
-    return contents;
-}
-
 [[nodiscard]] bool contains(const std::string& text, const std::string& needle) {
     return text.find(needle) != std::string::npos;
 }

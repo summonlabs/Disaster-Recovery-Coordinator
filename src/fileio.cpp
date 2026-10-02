@@ -353,16 +353,18 @@ Result<File> File::open(const std::string& path, const char* mode) {
     if (!native.ok()) {
         return native.status();
     }
-    int flags = 0;
+    // O_CLOEXEC on every descriptor: a participant process must never inherit
+    // the coordinator's journal, snapshot or lock file, even momentarily.
+    int flags = O_CLOEXEC;
     const std::string_view m{mode};
     if (m == "rb") {
-        flags = O_RDONLY;
+        flags |= O_RDONLY;
     } else if (m == "wb") {
-        flags = O_WRONLY | O_CREAT | O_TRUNC;
+        flags |= O_WRONLY | O_CREAT | O_TRUNC;
     } else if (m == "ab") {
-        flags = O_RDWR | O_CREAT;
+        flags |= O_RDWR | O_CREAT;
     } else if (m == "r+b") {
-        flags = O_RDWR;
+        flags |= O_RDWR;
     } else {
         return Status{ErrorCode::Invalid, "unsupported file mode"};
     }
@@ -388,7 +390,7 @@ Result<File> File::open_exclusive_new(const std::string& path) {
     if (!native.ok()) {
         return native.status();
     }
-    const int fd = ::open(native.value().c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+    const int fd = ::open(native.value().c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
     if (fd < 0) {
         if (errno == EEXIST) {
             return Status{ErrorCode::Duplicate, "file already exists: " + path};
@@ -678,7 +680,7 @@ Status sync_directory(const std::string& path) {
     if (!native.ok()) {
         return native.status();
     }
-    const int fd = ::open(native.value().c_str(), O_RDONLY | O_DIRECTORY);
+    const int fd = ::open(native.value().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (fd < 0) {
         return Status{ErrorCode::Io, last_error_message("open(directory)")};
     }

@@ -82,17 +82,6 @@ void write_text(const std::filesystem::path& path, const std::string& contents) 
     stream.close();
 }
 
-[[nodiscard]] std::string read_text(const std::filesystem::path& path) {
-    std::ifstream stream(path, std::ios::binary);
-    std::string contents;
-    char buffer[4096];
-    while (stream.read(buffer, static_cast<std::streamsize>(sizeof(buffer))) ||
-           stream.gcount() > 0) {
-        contents.append(buffer, static_cast<std::size_t>(stream.gcount()));
-    }
-    return contents;
-}
-
 // One line per request the participant read, as drc_endpoint --record writes
 // it. This is the independent evidence that a request really arrived.
 [[nodiscard]] std::vector<std::string> read_lines(const std::string& path) {

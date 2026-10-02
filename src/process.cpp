@@ -120,6 +120,39 @@ struct ExchangeDeadline {
     }
     return ok_status();
 }
+#else
+// The verdict of a reaped child: its exit code, or 128 + signal when it was
+// killed. Both platforms report the same shape.
+[[nodiscard]] int decode_wait_status(int status) {
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return -1;
+}
+
+// Reaps a child that has already been killed, so it does not stay a zombie for
+// the life of the process. Bounded: SIGKILL cannot be caught, so this returns
+// promptly, and the loop exists only so that a process which cannot be
+// scheduled at all cannot wedge the caller.
+void reap_killed_child(std::uint64_t pid) {
+    if (pid == 0) {
+        return;
+    }
+    int status = 0;
+    for (int attempt = 0; attempt < 2000; ++attempt) {
+        const pid_t done = ::waitpid(static_cast<pid_t>(pid), &status, WNOHANG);
+        if (done == static_cast<pid_t>(pid)) {
+            return;
+        }
+        if (done < 0 && errno != EINTR) {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
 #endif
 
 }  // namespace
@@ -648,38 +681,6 @@ namespace {
     return filled;
 }
 
-// The verdict of a reaped child: its exit code, or 128 + signal when it was
-// killed. Both platforms report the same shape.
-[[nodiscard]] int decode_wait_status(int status) {
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
-    }
-    if (WIFSIGNALED(status)) {
-        return 128 + WTERMSIG(status);
-    }
-    return -1;
-}
-
-// Reaps a child that has already been killed. Bounded: SIGKILL cannot be
-// caught, so this returns promptly, and the loop exists only so that a process
-// which cannot be scheduled at all cannot wedge the caller.
-void reap_killed_child(std::uint64_t pid) {
-    if (pid == 0) {
-        return;
-    }
-    int status = 0;
-    for (int attempt = 0; attempt < 2000; ++attempt) {
-        const pid_t done = ::waitpid(static_cast<pid_t>(pid), &status, WNOHANG);
-        if (done == static_cast<pid_t>(pid)) {
-            return;
-        }
-        if (done < 0 && errno != EINTR) {
-            return;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-}
-
 }  // namespace
 
 Result<std::vector<std::uint8_t>> Child::read_frame(std::uint32_t max_frame_bytes,
@@ -771,18 +772,14 @@ bool Child::running() const {
     if (pid_ == 0 || exited_) {
         return false;
     }
-    int status = 0;
-    const pid_t done = ::waitpid(static_cast<pid_t>(pid_), &status, WNOHANG);
-    if (done == static_cast<pid_t>(pid_)) {
-        // waitpid() consumes the exit status, so it is recorded here: throwing
-        // it away would make a later wait() fail with ECHILD and lose the
-        // outcome of the child forever. GetExitCodeProcess on Windows is
-        // read-only, so that platform has no equivalent of this hazard.
-        exited_ = true;
-        exit_code_ = decode_wait_status(status);
-        return false;
+    // A query, never a reap: waitpid() would consume the exit status and make a
+    // later wait() fail with ECHILD, and this method is const because asking
+    // whether a child runs must not change anything. kill(pid, 0) only tests
+    // for existence, which is what GetExitCodeProcess does on Windows.
+    if (::kill(static_cast<pid_t>(pid_), 0) == 0) {
+        return true;
     }
-    return done == 0;
+    return errno != ESRCH;
 }
 
 Result<std::string> Child::read_stderr(std::uint32_t max_bytes) {

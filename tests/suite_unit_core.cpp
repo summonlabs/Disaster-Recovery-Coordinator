@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 
+#include "drc/version.hpp"
+
 #include "drc/canonical.hpp"
 #include "drc/digest.hpp"
 #include "drc/error.hpp"
@@ -274,4 +276,18 @@ DRC_TEST(unit_policy_equality_covers_every_field) {
     right = left;
     right.max_step_attempts += 1;
     DRC_REQUIRE(!(left == right));
+}
+
+DRC_TEST(unit_version_matches_the_configured_package_version) {
+    // The header is the single source of truth for the API. The CMake project
+    // version is what the installed package config advertises to find_package.
+    // If they drift, a consumer is promised one version and linked against
+    // another, so the two are compared here rather than trusted to stay equal.
+    const std::string reported{drc::version_string()};
+    const std::string configured{DRC_PACKAGE_VERSION};
+    DRC_REQUIRE_EQ(reported, configured);
+    const std::string from_components = std::to_string(drc::kVersionMajor) + "." +
+                                       std::to_string(drc::kVersionMinor) + "." +
+                                       std::to_string(drc::kVersionPatch);
+    DRC_REQUIRE_EQ(from_components, configured);
 }

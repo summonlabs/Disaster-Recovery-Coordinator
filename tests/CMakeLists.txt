@@ -9,6 +9,10 @@ if(TARGET drcctl)
     target_compile_definitions(drc_tests PRIVATE DRC_TOOLS_DIR="$<TARGET_FILE_DIR:drcctl>")
 endif()
 
+# The header is the API's version; the project version is what the installed
+# package config advertises. A test compares them so they cannot drift.
+target_compile_definitions(drc_tests PRIVATE DRC_PACKAGE_VERSION="${PROJECT_VERSION}")
+
 if(MSVC)
     target_compile_options(drc_tests PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)
     if(DRC_WARNINGS_AS_ERRORS)
