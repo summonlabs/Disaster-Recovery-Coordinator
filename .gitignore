@@ -1,0 +1,28 @@
+# Build trees
+build/
+out/
+cmake-build-*/
+install/
+*.user
+
+# Package/install validation scratch
+_install/
+_consumer/
+_fresh/
+
+# Editor/IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+
+# OS debris
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local scratch artifacts
+*.log
+*.tmp
+*.bak
+drc-scratch/

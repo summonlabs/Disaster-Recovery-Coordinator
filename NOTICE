@@ -1,0 +1,19 @@
+Disaster Recovery Coordinator
+Copyright 2026 Summon Software Labs
+
+This product includes software developed for the Disaster Recovery Coordinator
+project (https://github.com/summonlabs/Disaster-Recovery-Coordinator).
+
+The Disaster Recovery Coordinator implementation, its public API surface, its
+command line tools, its durable journal and snapshot formats, and the synthetic
+effect endpoints used by its test suites were all written for this repository.
+No third-party runtime dependency is vendored, linked, or required: the
+SHA-256 and CRC-32C implementations, the canonical encoders, the strict record
+decoder, the journal/snapshot formats, the loopback transport, and the
+subprocess launcher are part of this distribution.
+
+The synthetic effect endpoints model the externally observable behaviour of a
+site control plane, a placement/reservation/capacity authority, an accelerator
+execution recovery authority, and a network recovery authority. They do not
+talk to, and are not derived from, any real data centre management, building
+management, orchestration, or infrastructure product.

@@ -1,0 +1,16 @@
+add_executable(drc_benchmarks benchmark_main.cpp)
+target_link_libraries(drc_benchmarks PRIVATE DisasterRecoveryCoordinator::disaster_recovery_coordinator)
+
+if(MSVC)
+    target_compile_options(drc_benchmarks PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)
+    if(DRC_WARNINGS_AS_ERRORS)
+        target_compile_options(drc_benchmarks PRIVATE /WX)
+    endif()
+else()
+    target_compile_options(drc_benchmarks PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
+    if(DRC_WARNINGS_AS_ERRORS)
+        target_compile_options(drc_benchmarks PRIVATE -Werror)
+    endif()
+endif()
+
+add_test(NAME benchmarks COMMAND drc_benchmarks --quick)

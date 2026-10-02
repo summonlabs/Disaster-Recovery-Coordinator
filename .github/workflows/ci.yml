@@ -1,0 +1,111 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+# No job or step sets a timeout: a hang is a defect to diagnose, not something
+# to kill. Every job runs the suites plainly and lets them finish.
+
+jobs:
+  windows-msvc:
+    name: windows / msvc / ${{ matrix.build_type }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [ Debug, Release ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/_install
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Install and validate a downstream consumer
+        run: pwsh -File scripts/verify_install.ps1 -BuildDir build -Prefix _install -Config ${{ matrix.build_type }} -SkipBuild
+
+  ubuntu-gcc:
+    name: ubuntu / gcc / ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [ Debug, Release ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_CXX_COMPILER=g++ -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/_install
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Install and validate a downstream consumer
+        run: bash scripts/verify_install.sh build _install ${{ matrix.build_type }}
+
+  ubuntu-clang:
+    name: ubuntu / clang / ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [ Debug, Release ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  ubuntu-sanitizers:
+    name: ubuntu / clang / asan+ubsan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DDRC_ENABLE_SANITIZERS=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:check_initialization_order=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build --output-on-failure
+
+  fresh-clone:
+    name: ubuntu / fresh clone from the commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone the commit into a clean directory and build it there
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          git clone --quiet --no-hardlinks . "$work/clone"
+          git -C "$work/clone" checkout --quiet "$GITHUB_SHA"
+          cmake -S "$work/clone" -B "$work/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$work/build"
+          ctest --test-dir "$work/build" --output-on-failure
+          rm -rf "$work"

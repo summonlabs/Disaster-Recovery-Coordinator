@@ -1,0 +1,23 @@
+add_executable(drcctl drcctl.cpp)
+target_link_libraries(drcctl PRIVATE DisasterRecoveryCoordinator::disaster_recovery_coordinator)
+
+add_executable(drc_endpoint drc_endpoint.cpp)
+target_link_libraries(drc_endpoint PRIVATE DisasterRecoveryCoordinator::disaster_recovery_coordinator)
+
+if(MSVC)
+    target_compile_options(drcctl PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)
+    target_compile_options(drc_endpoint PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)
+    if(DRC_WARNINGS_AS_ERRORS)
+        target_compile_options(drcctl PRIVATE /WX)
+        target_compile_options(drc_endpoint PRIVATE /WX)
+    endif()
+else()
+    target_compile_options(drcctl PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
+    target_compile_options(drc_endpoint PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
+    if(DRC_WARNINGS_AS_ERRORS)
+        target_compile_options(drcctl PRIVATE -Werror)
+        target_compile_options(drc_endpoint PRIVATE -Werror)
+    endif()
+endif()
+
+install(TARGETS drcctl drc_endpoint RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
