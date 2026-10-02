@@ -1369,6 +1369,7 @@ DRC_TEST(adversarial_long_path_is_handled_honestly) {
     //     extended-length prefix, which disables path normalisation, so every
     //     separator has to be a backslash. With the chain already present, the
     //     only question left is whether the coordinator can use a long path.
+#if defined(_WIN32)
     std::error_code error;
     const std::filesystem::path deep_path(deep);
     std::wstring wide = deep_path.wstring();
@@ -1382,6 +1383,17 @@ DRC_TEST(adversarial_long_path_is_handled_honestly) {
     const bool chain_exists = std::filesystem::exists(extended_path, error);
     note(std::string{"this test's own extended-length create_directories -> "} +
          (chain_exists ? "the chain exists" : error.message()));
+#else
+    // POSIX has neither a MAX_PATH nor an extended-length prefix: the helper
+    // above is the whole story, and the chain it created is the one that is
+    // asked about here.
+    Result<bool> present_after_ensure = fileio::exists(deep);
+    DRC_REQUIRE(present_after_ensure.ok());
+    const bool chain_exists = present_after_ensure.value();
+    note(std::string{"this platform has no extended-length prefix; the chain from "
+                     "fileio::ensure_directory exists -> "} +
+         (chain_exists ? "yes" : "no"));
+#endif
 
     // (3) The coordinator, on the deep directory.
     CoordinatorOptions options = scratch_options(deep);

@@ -24,6 +24,7 @@ void bump_checks() { g_checks += 1; }
 void fail(const char* file, int line, const std::string& message) {
     g_failures += 1;
     std::cout << "    FAIL " << file << ":" << line << ": " << message << "\n";
+    std::cout.flush();
 }
 
 Registrar::Registrar(const char* name, void (*fn)()) {
@@ -72,6 +73,9 @@ int main(int argc, char** argv) {
         }
         const std::uint64_t failures_before = drctest::failures();
         std::cout << "  RUN  " << test.name << "\n";
+        // Flushed before the test runs: if a test aborts the process, the line
+        // that names it must already be on disk, or the crash has no author.
+        std::cout.flush();
         try {
             test.fn();
         } catch (const drctest::TestAbort&) {
