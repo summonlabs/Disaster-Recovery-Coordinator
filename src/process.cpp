@@ -17,6 +17,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
+#include <mutex>
 #include <poll.h>
 #include <sys/wait.h>
 #include <thread>
@@ -121,6 +122,31 @@ struct ExchangeDeadline {
     return ok_status();
 }
 #else
+// Writing to a child that has already exited raises SIGPIPE, whose default
+// action terminates the process. A participant that dies mid-exchange is a
+// transport outcome — the request becomes an unknown result and the step is
+// fenced — and it must never be the end of the coordinator. The default
+// disposition is replaced once with "ignore", so write() reports EPIPE instead;
+// an application that installed its own handler keeps it, and the change is
+// stated in the header and in the README.
+void ignore_sigpipe_once() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+        struct sigaction current {};
+        if (::sigaction(SIGPIPE, nullptr, &current) != 0) {
+            return;
+        }
+        if (current.sa_handler != SIG_DFL && current.sa_handler != SIG_IGN) {
+            return;
+        }
+        struct sigaction action {};
+        action.sa_handler = SIG_IGN;
+        (void)::sigemptyset(&action.sa_mask);
+        action.sa_flags = 0;
+        (void)::sigaction(SIGPIPE, &action, nullptr);
+    });
+}
+
 // The verdict of a reaped child: its exit code, or 128 + signal when it was
 // killed. Both platforms report the same shape.
 [[nodiscard]] int decode_wait_status(int status) {
@@ -542,6 +568,7 @@ Result<std::unique_ptr<Child>> Child::spawn(const SpawnOptions& options) {
     if (options.command.empty()) {
         return Status{ErrorCode::Invalid, "spawn requires at least one argument"};
     }
+    ignore_sigpipe_once();
     int stdin_pipe[2] = {-1, -1};
     int stdout_pipe[2] = {-1, -1};
     int stderr_pipe[2] = {-1, -1};

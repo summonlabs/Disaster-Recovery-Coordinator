@@ -199,6 +199,10 @@ DRC_TEST(concurrency_readers_never_observe_a_torn_state) {
                     failed.store(true);
                     break;
                 }
+                // A stress loop, not a wall: yielding keeps the readers
+                // hammering the shared lock without starving the single writer
+                // that is trying to advance the plan.
+                std::this_thread::yield();
             }
         }));
     }

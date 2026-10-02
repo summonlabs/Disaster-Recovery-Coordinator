@@ -23,6 +23,13 @@ struct SpawnOptions {
     std::string working_directory;
 };
 
+// POSIX note. Writing to a participant that has already exited raises SIGPIPE,
+// whose default action terminates the process; a participant that dies
+// mid-exchange is a transport outcome, not the end of the coordinator. The
+// first spawn therefore replaces the *default* disposition of SIGPIPE with
+// "ignore" once, so the write reports EPIPE and becomes an unknown result.
+// A process that installed its own SIGPIPE handler keeps it untouched.
+
 class Child {
 public:
     Child() = default;

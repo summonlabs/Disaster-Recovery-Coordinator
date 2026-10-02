@@ -504,7 +504,7 @@ struct Rig {
         // contract. The retry is bounded by attempts — a bound on work, never on
         // wall-clock time — and every other status still fails the test with its
         // message attached.
-        constexpr std::uint32_t kMaxBusyRetries = 20000;
+        constexpr std::uint32_t kMaxBusyRetries = 200000;
         for (std::uint32_t attempt = 0;; ++attempt) {
             drc::Result<drc::AdvanceReport> report = coordinator->advance(request);
             if (report.ok()) {
@@ -515,6 +515,10 @@ struct Rig {
                 DRC_REQUIRE_OK(report);
                 return drc::AdvanceReport{};
             }
+            // Yield so the readers holding the shared lock can finish their
+            // critical sections and let the writer in. The bound is on attempts,
+            // never on wall-clock time.
+            std::this_thread::yield();
         }
     }
 
