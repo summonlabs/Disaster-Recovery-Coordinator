@@ -6,7 +6,7 @@ event covers, which protected obligations must survive, in what order recovery
 may proceed, which delegated effects were requested from neighbouring
 authorities, and what those authorities answered.
 
-Version 1.0.0. C++20, CMake, no third-party runtime dependency, Apache-2.0.
+Version 1.0.1. C++20, CMake, no third-party runtime dependency, Apache-2.0.
 
 ## What it owns, and what it does not
 
@@ -201,11 +201,26 @@ First-party warnings are errors: `-Wall -Wextra -Wpedantic -Wshadow
 -Wconversion -Wsign-conversion -Werror` on GCC/Clang, `/W4 /WX /permissive-
 /utf-8 /Zc:__cplusplus` on MSVC.
 
+### Continuous integration
+
+`.github/workflows/ci.yml` is the same build, test and install path on eight
+jobs: MSVC Debug and Release on Windows, GCC Debug and Release, clang Debug and
+Release, clang with AddressSanitizer and UndefinedBehaviorSanitizer, and a fresh
+clone of the commit built and tested in a clean directory. Every job also runs
+the suite as ten CTest areas, so a failure names the area it came from.
+
+The Linux jobs are the only place the POSIX half of the process layer, the file
+layer and the harness is compiled and executed. They found five defects there on
+their first run, and two more in the harness itself; all seven are listed under
+"Validation performed" with what caused them.
+
 ### Testing rules
 
 There is no timeout, watchdog, or kill-as-pass anywhere in this repository: not
 in CTest, not in the workflows, not in the scripts. A hanging test is a defect
-to diagnose, and the suites are expected to complete naturally.
+to diagnose, and the suites are expected to complete naturally. The same rule
+applies to the tests themselves: their loops are bounded by work (attempts,
+rounds, dispatch budgets), never by wall-clock time.
 
 ### Consuming the installed package
 
@@ -245,11 +260,11 @@ exercised by the suites.
 
 | Platform | Status |
 | --- | --- |
-| Windows x64, MSVC 19.4x | built and tested (Debug and Release) |
-| Windows x64, MinGW GCC 14 and clang 19 | built and tested |
-| Linux x64, GCC | built and tested in CI |
-| Linux x64, Clang | built and tested in CI |
-| Linux, ASan + UBSan | built and tested in CI |
+| Windows x64, MSVC 19.4x | built and tested, Debug and Release, plus AddressSanitizer |
+| Windows x64, MinGW GCC 14 and MinGW clang 19 | built and tested |
+| Linux x64, GCC 13 | built and tested in CI, Debug and Release |
+| Linux x64, clang 18 | built and tested in CI, Debug and Release |
+| Linux x64, clang with ASan + UBSan | built and tested in CI, including leak detection |
 
 Honest limitations, stated rather than hidden:
 
@@ -327,16 +342,30 @@ Everything below was run on the machine that produced this repository, with the
 exact commands shown, and the numbers are the ones the tools printed. Nothing in
 this section is extrapolated.
 
-| Configuration | Command | Result |
+Every job in `.github/workflows/ci.yml` is required to pass on the commit this
+release points at. These are the results of that run, followed by the local runs
+used while developing:
+
+| Configuration | How it runs | Result |
 | --- | --- | --- |
-| Windows x64, MSVC 19.44, Release | `cmake --build build/msvc` then `build\msvc\tests\drc_tests.exe` | **81 passed, 0 failed, 11,402 checks**, 27.5 s |
-| Windows x64, MSVC 19.44, Debug | `-DCMAKE_BUILD_TYPE=Debug`, same test binary | **81 passed, 0 failed, 11,402 checks**, 26.7 s |
-| Windows x64, MSVC 19.44, AddressSanitizer | `-DDRC_ENABLE_MSVC_ASAN=ON`, `ASAN_OPTIONS=halt_on_error=1` | **81 passed, 0 failed**, **0 sanitizer reports** |
-| Windows x64, MinGW GCC 14.2, Release | `-DCMAKE_CXX_COMPILER=g++` | **81 passed, 0 failed, 11,410 checks**, 27.2 s |
-| Windows x64, MinGW clang 19.1, Release | `-DCMAKE_CXX_COMPILER=clang++` | **81 passed, 0 failed, 11,410 checks**, 24.5 s |
-| CTest, all ten areas | `ctest --test-dir build/msvc --output-on-failure` | **10/10 passed**, 22.5 s |
-| Installed package, independent consumer | `scripts/verify_install.ps1` | configure + build + link + run against `_install`: `final phase: stabilized, steps: 7` … `consumer ok`, exit 0 |
-| Fresh clone of this commit | `scripts/fresh_clone_check.ps1 -Ref HEAD` | **81 passed, 0 failed, 11,402 checks** in the clone, `fresh clone validation passed at HEAD` |
+| Ubuntu 24.04, GCC 13.3, Debug and Release | CI: `ubuntu / gcc / <config>` | **82 passed, 0 failed, 11,330 checks** per job |
+| Ubuntu 24.04, clang 18, Debug and Release | CI: `ubuntu / clang / <config>` | **82 passed, 0 failed** per job |
+| Ubuntu 24.04, clang, AddressSanitizer + UBSan | CI: `-DDRC_ENABLE_SANITIZERS=ON`, `detect_leaks=1`, `halt_on_error=1` | **82 passed, 0 failed**, no sanitizer report |
+| Ubuntu 24.04, fresh clone of the commit | CI: `ubuntu / fresh clone from the commit` | **82 passed, 0 failed** inside the clone |
+| Ubuntu 24.04, package install + downstream consumer | CI: `bash scripts/verify_install.sh build _install Release` | configure, build, link and run against `_install`: `final phase: stabilized, steps: 7` … `consumer ok`, exit 0 |
+| Windows, MSVC 19.44, Debug and Release | CI: `windows / msvc / <config>` | **82 passed, 0 failed** per job, plus the PowerShell install check |
+| Windows x64, MSVC 19.44, Release | local: `build\msvc\tests\drc_tests.exe` | **82 passed, 0 failed, 11,329 checks**, 31 s |
+| Windows x64, MSVC 19.44, AddressSanitizer | local: `-DDRC_ENABLE_MSVC_ASAN=ON`, `ASAN_OPTIONS=halt_on_error=1` | **82 passed, 0 failed**, no sanitizer report |
+| Windows x64, MinGW GCC 14.2 and MinGW clang 19.1, Release | local: `-DCMAKE_CXX_COMPILER=g++` / `clang++` | **82 passed, 0 failed, 11,329 checks** on both |
+| CTest, all ten areas | local: `ctest --test-dir build/msvc --output-on-failure` | **10/10 passed** |
+| Fresh clone on Windows | local: `scripts/fresh_clone_check.ps1 -Ref HEAD` | **82 passed, 0 failed** in the clone |
+
+The Linux jobs are not decoration: they are the only place the POSIX half of the
+process layer, the file layer and the test harness is compiled and executed, and
+the first run of this workflow found five defects in that layer and two in the
+test harness itself (see below). The Windows jobs caught the same classes of
+problem on their side, including one that MSVC's checked iterators reported and
+nothing else did.
 
 Tests are plain runs with no timeout, no watchdog, and no kill-as-pass rule,
 anywhere: not in CTest, not in the scripts, not in the workflows. The suites
@@ -379,6 +408,38 @@ These are the real ones, kept here because the fixes are the interesting part:
    operational budget, an unanswered exchange becomes an unknown outcome, and a
    half-read frame quarantines that participant instead of desynchronising the
    stream.
+10. **POSIX truncation left a hole in the journal.** `ftruncate` does not move the
+    file offset, so the append that follows a repair started at the old end of
+    file and the kernel filled the gap with zeros: every repaired journal came
+    back as interior corruption on Linux. Windows positions explicitly before
+    `SetEndOfFile`, which is why only one platform was affected. The POSIX path
+    now seeks to the truncated size. Found by the Linux jobs.
+11. **The POSIX process layer did not compile, and could not have been caught
+    locally.** A reaping helper was defined after its use, and `running()`
+    assigned to members from a `const` method. Neither Windows build compiles
+    that branch at all. Found by the Linux jobs.
+12. **The liveness query consumed the child's exit status.** `running()` called
+    `waitpid(WNOHANG)`, which reaps: the status was discarded, so a later `wait()`
+    failed with `ECHILD` and the outcome of the process was lost forever. It is a
+    read-only existence check now, exactly like `GetExitCodeProcess`.
+13. **Diagnostics could block, and killed children stayed zombies.**
+    `read_stderr` waited on an empty pipe where Windows peeks, and the destructor
+    killed a child without reaping it. Both fixed; descriptors are also opened
+    with `O_CLOEXEC` so a participant never inherits the coordinator's journal.
+14. **Nothing ran on Linux at all.** The console and the participants were driven
+    through `cmd.exe` and `.cmd` wrappers, so on Linux every one of those tests
+    failed with exit code 127 before it tested anything. Script creation, quoting
+    and the shell invocation now live in the shared harness and work on both
+    platforms.
+15. **A crash had no author.** The test runner flushed its log after a test
+    finished, so a test that aborted the process left no record of which test it
+    was. The `RUN` line is flushed before the test starts.
+16. **A concurrent `Busy` was treated as a failure, and a failing requirement
+    terminated the process.** `Busy` is the documented answer when another caller
+    holds the engine lock, so the harness retries it with a bound on attempts
+    rather than on wall-clock time; and threads now live in a group that joins
+    them on scope exit, so a failing requirement is reported instead of unwinding
+    into `std::terminate` and hiding the failure that caused it.
 
 ### What is *not* claimed
 
@@ -387,8 +448,13 @@ These are the real ones, kept here because the fixes are the interesting part:
   protocol, not facility controllers; a real deployment supplies its own.
 * Effects are at-least-once per attempt. A participant that is not idempotent
   for a repeated request can apply an effect twice.
-* The Linux jobs in `.github/workflows/ci.yml` were not executed on this machine;
-  GCC and clang were exercised here on Windows (MinGW) and MSVC natively.
+* **The transport is pipes, not sockets.** Participants speak a framed protocol
+  over stdin and stdout, which is what the boundary needs and what the tests
+  exercise on both platforms. There is no socket code in this repository, and no
+  claim is made about one.
+* **Benchmark numbers come from one Windows machine**, and every durable figure
+  is dominated by the storage flush; they are throughput indicators, not service
+  levels.
 
 ## Benchmarks
 
