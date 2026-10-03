@@ -34,9 +34,6 @@ warning is not ready.
 On a toolchain that supports it, configure with `-DDRC_ENABLE_SANITIZERS=ON`
 to build the suites under AddressSanitizer and UndefinedBehaviorSanitizer.
 
-Do not add a timeout, watchdog, or process-kill-as-pass rule to any test or
-validation command. A hang in this project is a defect to diagnose.
-
 ## Registering a test
 
 Add a file named `tests/suite_<topic>.cpp`. The CMake glob picks it up after a
