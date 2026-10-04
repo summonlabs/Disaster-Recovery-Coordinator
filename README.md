@@ -1,6 +1,6 @@
 # Disaster Recovery Coordinator
 
-`Disaster Recovery Coordinator` is the DCCP boundary that owns **disaster-recovery
+`Disaster Recovery Coordinator` owns **disaster-recovery
 orchestration state and sequencing across complete facilities**: which sites an
 event covers, which protected obligations must survive, in what order recovery
 may proceed, which delegated effects were requested from neighbouring
